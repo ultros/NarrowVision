@@ -9,6 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>assets/NarrowVision.ico</ApplicationIcon>
     <Product>NarrowVision</Product>
+    <Version>1.0.1</Version>
     <Company>Novus Mercatura</Company>
     <Description>Desktop fog overlay and click confirmation for Windows.</Description>
     <Copyright>Copyright © 2026 Novus Mercatura. CC BY 4.0.</Copyright>

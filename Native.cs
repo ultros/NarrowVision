@@ -103,6 +103,9 @@ internal static class Native
     public static void PlaceTopmost(nint window, int x, int y, int width, int height)
         => SetWindowPos(window, Topmost, x, y, width, height, 0x0010 | 0x0200);
 
+    public static void MoveTopmost(nint window, int x, int y)
+        => SetWindowPos(window, Topmost, x, y, 0, 0, 0x0001 | 0x0010 | 0x0200);
+
     public static void UseDarkTitleBar(nint window)
     {
         const int useImmersiveDarkMode = 20;

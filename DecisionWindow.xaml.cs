@@ -50,26 +50,28 @@ public partial class DecisionWindow : Window
 
         _readyAfter = Environment.TickCount64 + 550;
         _deadline = Environment.TickCount64 + seconds * 1000;
+        var desiredSize = new Size(Width, Height);
         var handle = new WindowInteropHelper(this).EnsureHandle();
-        Place(handle, attempt.Target.Position);
+        var bounds = GetPlacement(handle, attempt.Target.Position, desiredSize);
+        Native.PlaceTopmost(handle, bounds.X, bounds.Y, bounds.Width, bounds.Height);
         Show();
-        Place(handle, attempt.Target.Position);
+        Native.PlaceTopmost(handle, bounds.X, bounds.Y, bounds.Width, bounds.Height);
         Tick();
         _timer.Start();
     }
 
-    private void Place(nint handle, Native.Point point)
+    private static System.Drawing.Rectangle GetPlacement(nint handle, Native.Point point, Size desiredSize)
     {
         var work = Forms.Screen.FromPoint(new System.Drawing.Point(point.X, point.Y)).WorkingArea;
         // Assign the monitor first so Windows can calculate the popup's per-monitor DPI.
-        Native.PlaceTopmost(handle, work.Left, work.Top, 1, 1);
+        Native.MoveTopmost(handle, work.Left, work.Top);
         double scale = Math.Max(96u, Native.GetDpiForWindow(handle)) / 96.0;
-        int width = Math.Min(work.Width, (int)Math.Ceiling(Width * scale));
-        int height = Math.Min(work.Height, (int)Math.Ceiling(Height * scale));
+        int width = Math.Min(work.Width, (int)Math.Ceiling(desiredSize.Width * scale));
+        int height = Math.Min(work.Height, (int)Math.Ceiling(desiredSize.Height * scale));
         int gap = (int)(18 * scale);
         int x = point.X + gap + width <= work.Right ? point.X + gap : point.X - gap - width;
         int y = point.Y + gap + height <= work.Bottom ? point.Y + gap : point.Y - gap - height;
-        Native.PlaceTopmost(handle, Math.Clamp(x, work.Left, work.Right - width),
+        return new(Math.Clamp(x, work.Left, work.Right - width),
             Math.Clamp(y, work.Top, work.Bottom - height), width, height);
     }
 
