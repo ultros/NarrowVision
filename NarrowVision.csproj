@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets/NarrowVision.ico</ApplicationIcon>
+    <Product>NarrowVision</Product>
+    <Company>Novus Mercatura</Company>
+    <Description>Desktop fog overlay and click confirmation for Windows.</Description>
+    <Copyright>Copyright © 2026 Novus Mercatura. CC BY 4.0.</Copyright>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="assets/NarrowVision.ico" />
+  </ItemGroup>
+</Project>
