@@ -7,7 +7,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 
-namespace NarrowVision;
+namespace NovusVision;
 
 internal static class FogDrawing
 {

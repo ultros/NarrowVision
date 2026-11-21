@@ -1,0 +1,11 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <!-- ICE91 warns about per-user files in a hypothetical machine-wide installation. -->
+    <SuppressIces>ICE91</SuppressIces>
+    <DefineConstants>PayloadDir=$(PayloadDir);InstallerVersion=$(InstallerVersion)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+  </ItemGroup>
+</Project>

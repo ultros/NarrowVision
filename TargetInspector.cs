@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 
-namespace NarrowVision;
+namespace NovusVision;
 
 internal enum TargetKind { Unknown, Background, Action }
 

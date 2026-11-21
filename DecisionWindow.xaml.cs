@@ -4,7 +4,7 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 
-namespace NarrowVision;
+namespace NovusVision;
 
 public partial class DecisionWindow : Window
 {
@@ -30,7 +30,7 @@ public partial class DecisionWindow : Window
     internal bool CanProceed => ProceedButton.IsEnabled && IsVisible;
 
     internal void Present(ClickAttempt attempt, TargetDetails details, string application, int seconds,
-        bool confirmShortcut, bool cancelShortcut)
+        string? confirmShortcut, string? cancelShortcut)
     {
         LocationText.Text = attempt.Button == MouseButton.Middle ? $"{application} · Middle click" : application;
         TargetName.Text = details.Kind == TargetKind.Unknown ? "Target details unavailable" :
@@ -42,9 +42,9 @@ public partial class DecisionWindow : Window
             string.IsNullOrEmpty(details.Role) ? "Desktop click" : details.Role;
         KeyHint.Text = (cancelShortcut, confirmShortcut) switch
         {
-            (true, true) => "Esc to cancel  ·  Ctrl+Alt+Enter to proceed",
-            (false, true) => "Ctrl+Alt+Enter to proceed",
-            (true, false) => "Esc to cancel",
+            ({ } cancel, { } confirm) => $"{cancel} to cancel  ·  {confirm} to proceed",
+            (null, { } confirm) => $"{confirm} to proceed",
+            ({ } cancel, null) => $"{cancel} to cancel",
             _ => "Choose an action above"
         };
 

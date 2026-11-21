@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Forms = System.Windows.Forms;
 
-namespace NarrowVision;
+namespace NovusVision;
 
 internal enum MouseButton { Left, Right, Middle }
 
@@ -64,7 +64,7 @@ internal sealed class MouseGuard : IDisposable
         _onClick = onClick;
         _onStatus = onStatus;
         _callback = OnMouse;
-        _thread = new Thread(Run) { IsBackground = true, Name = "NarrowVision mouse hook" };
+        _thread = new Thread(Run) { IsBackground = true, Name = "NovusVision mouse hook" };
         _thread.Start();
     }
 
@@ -105,7 +105,7 @@ internal sealed class MouseGuard : IDisposable
                 if (!_reportedError)
                 {
                     _reportedError = true;
-                    _onStatus("Click Guard hit an input error. Restart NarrowVision to restore its checks.");
+                    _onStatus("Click Guard hit an input error. Restart NovusVision to restore its checks.");
                 }
             }
         }

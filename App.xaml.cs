@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security;
 using System.Text;
 using System.Threading;
@@ -13,19 +15,17 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 
-namespace NarrowVision;
+namespace NovusVision;
 
 public partial class App : Application
 {
-    private const int FogHotkey = 1, GuardHotkey = 2, SettingsHotkey = 3, PauseHotkey = 4;
-    private const int ConfirmHotkey = 5, CancelHotkey = 6;
-    private const uint ControlAlt = Native.ModControl | Native.ModAlt | Native.ModNoRepeat;
     private readonly TargetInspector _inspector = new();
     private readonly DispatcherTimer _pauseTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _saveTimer = new() { Interval = TimeSpan.FromMilliseconds(450) };
     private readonly DispatcherTimer _focusTimer = new() { Interval = TimeSpan.FromMilliseconds(150) };
-    private readonly bool[] _hotkeys = new bool[7];
+    private readonly HashSet<ShortcutAction> _registeredShortcuts = new();
     private Settings _settings = new();
+    private HotkeySettings _shortcuts = new();
     private SettingsWindow _window = null!;
     private FogOverlay _fog = null!;
     private MouseGuard _guard = null!;
@@ -45,6 +45,8 @@ public partial class App : Application
     private bool _settingsDirty;
     private bool _startWithWindows;
     private bool _startupAvailable = true;
+    private bool _changingStartup;
+    private bool _editingShortcuts;
     private string? _status;
     private string? _startupNotice;
 
@@ -58,7 +60,23 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        bool startInTray = e.Args.Contains(WindowsStartup.TrayArgument, StringComparer.OrdinalIgnoreCase);
+        if (e.Args.Contains(WindowsStartup.UninstallArgument, StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                WindowsStartup.RemoveRegistrationForCurrentExecutable();
+                Shutdown();
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or InvalidOperationException)
+            {
+                Shutdown(1);
+            }
+            return;
+        }
+
+        bool startInTray = e.Args.Contains(WindowsStartup.TrayArgument, StringComparer.OrdinalIgnoreCase) ||
+            WindowsStartup.IsLogonActivation();
+        // Keep the shared identity so the legacy portable build cannot run a second mouse hook.
         _showExisting = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\NarrowVision.Show");
         _singleInstance = new Mutex(false, @"Local\NarrowVision", out bool firstInstance);
         if (!firstInstance)
@@ -69,10 +87,13 @@ public partial class App : Application
             return;
         }
 
+        string? migrationNotice = MigrateLegacyInstallation();
         (_settings, _startupNotice) = Settings.Load();
+        (_shortcuts, var hotkeyNotice) = HotkeySettings.Load();
         var (defaultProfile, profileNotice) = Settings.LoadDefault();
         _settings = defaultProfile ?? _settings;
-        _startupNotice = profileNotice ?? (defaultProfile is null ? _startupNotice : null);
+        _startupNotice = profileNotice ?? hotkeyNotice ?? migrationNotice ??
+            (defaultProfile is null ? _startupNotice : null);
         _window = new SettingsWindow();
         MainWindow = _window;
         _window.Closing += HideToTray;
@@ -88,8 +109,9 @@ public partial class App : Application
         _window.SaveProfileRequested += SaveDefaultProfile;
         _window.LoadProfileRequested += LoadDefaultProfile;
         _window.ClearProfileRequested += ClearDefaultProfile;
+        _window.EditShortcutsRequested += EditShortcuts;
         _window.StatusChanged += SetStatus;
-        RefreshStartupPreference();
+        await RefreshStartupPreference();
         _window.SetProfile(Settings.HasDefault);
         _fog = new FogOverlay(Dispatcher);
         _guard = new MouseGuard(click => Dispatcher.BeginInvoke(() => InspectClick(click)),
@@ -109,31 +131,41 @@ public partial class App : Application
         if (_shuttingDown)
             return;
         if (!_guardAvailable)
-            _startupNotice = "Click Guard could not start. Close NarrowVision from the tray and reopen it.";
+            _startupNotice = "Click Guard could not start. Close NovusVision from the tray and reopen it.";
         ApplySettings();
     }
 
     private void CreateHotkeyWindow()
     {
-        _messages = new HwndSource(new HwndSourceParameters("NarrowVision shortcuts") { ParentWindow = new nint(-3) });
+        _messages = new HwndSource(new HwndSourceParameters("NovusVision shortcuts") { ParentWindow = new nint(-3) });
         _messages.AddHook(OnWindowMessage);
-        Register(FogHotkey, ControlAlt, 0x77); // F8
-        Register(GuardHotkey, ControlAlt, 0x78); // F9
-        Register(SettingsHotkey, ControlAlt, 0x79); // F10
-        Register(PauseHotkey, ControlAlt, 0x7A); // F11
+        RegisterGlobalShortcuts();
     }
 
-    private void Register(int id, uint modifiers, uint key)
+    private void RegisterGlobalShortcuts()
     {
-        if (_messages is { } source)
-            _hotkeys[id] = Native.RegisterHotKey(source.Handle, id, modifiers, key);
+        foreach (var action in HotkeySettings.Actions)
+        {
+            if (action < ShortcutAction.Proceed)
+                Register(action, _shortcuts[action]);
+        }
     }
 
-    private void Unregister(int id)
+    private bool Register(ShortcutAction action, Shortcut? shortcut)
     {
-        if (_hotkeys[id] && _messages is { } source)
-            Native.UnregisterHotKey(source.Handle, id);
-        _hotkeys[id] = false;
+        if (shortcut is null)
+            return true;
+        if (_messages is not { } source ||
+            !Native.RegisterHotKey(source.Handle, (int)action, shortcut.NativeModifiers, shortcut.VirtualKey))
+            return false;
+        _registeredShortcuts.Add(action);
+        return true;
+    }
+
+    private void Unregister(ShortcutAction action)
+    {
+        if (_registeredShortcuts.Remove(action) && _messages is { } source)
+            Native.UnregisterHotKey(source.Handle, (int)action);
     }
 
     private nint OnWindowMessage(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
@@ -141,14 +173,20 @@ public partial class App : Application
         if (message != Native.WmHotkey)
             return 0;
         handled = true;
-        switch ((int)wParam)
+        var action = (ShortcutAction)(int)wParam;
+        if (_editingShortcuts || !_registeredShortcuts.Contains(action) || _shortcuts[action] is not { } shortcut)
+            return 0;
+        uint messageGesture = unchecked((uint)(nuint)lParam) & 0xFFFF000F;
+        if (messageGesture != ((shortcut.VirtualKey << 16) | (uint)shortcut.Modifiers))
+            return 0;
+        switch (action)
         {
-            case FogHotkey: ToggleFog(); break;
-            case GuardHotkey: ToggleGuard(); break;
-            case SettingsHotkey: ShowSettings(); break;
-            case PauseHotkey: TogglePause(); break;
-            case ConfirmHotkey when _decision?.CanProceed == true: _ = ApproveClick(); break;
-            case CancelHotkey: CancelClick("Click canceled."); break;
+            case ShortcutAction.Fog: ToggleFog(); break;
+            case ShortcutAction.Guard: ToggleGuard(); break;
+            case ShortcutAction.Settings: ShowSettings(); break;
+            case ShortcutAction.Pause: TogglePause(); break;
+            case ShortcutAction.Proceed when _decision?.CanProceed == true: _ = ApproveClick(); break;
+            case ShortcutAction.Cancel: CancelClick("Click canceled."); break;
         }
         return 0;
     }
@@ -162,7 +200,7 @@ public partial class App : Application
             BackColor = Color.FromArgb(20, 35, 56),
             ForeColor = Color.FromArgb(239, 247, 255)
         };
-        menu.Items.Add("Open NarrowVision", null, (_, _) => ShowSettings());
+        menu.Items.Add("Open NovusVision", null, (_, _) => ShowSettings());
         menu.Items.Add(new Forms.ToolStripSeparator());
         _trayFog = new Forms.ToolStripMenuItem("Fog overlay", null, (_, _) => ToggleFog());
         _trayGuard = new Forms.ToolStripMenuItem("Click Guard", null, (_, _) => ToggleGuard());
@@ -171,12 +209,13 @@ public partial class App : Application
         _trayStartup = new Forms.ToolStripMenuItem("Start with Windows", null, (_, _) => SetWindowsStartup(!_startWithWindows));
         menu.Items.AddRange([_trayFog, _trayGuard, _trayPause, new Forms.ToolStripSeparator(), _trayLoadProfile, _trayStartup]);
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Exit NarrowVision", null, (_, _) => ExitApplication());
+        menu.Items.Add("Exit NovusVision", null, (_, _) => ExitApplication());
         _tray = new Forms.NotifyIcon { Icon = _trayIcon, ContextMenuStrip = menu, Visible = true };
-        menu.Opening += (_, _) =>
+        menu.Opening += async (_, _) =>
         {
-            RefreshStartupPreference();
-            RefreshStatus();
+            await RefreshStartupPreference();
+            if (!_shuttingDown)
+                RefreshStatus();
         };
         _tray.MouseDoubleClick += (_, args) =>
         {
@@ -207,7 +246,7 @@ public partial class App : Application
     {
         if (_shuttingDown)
             return;
-        RefreshStartupPreference();
+        _ = RefreshStartupPreference();
         if (_window.WindowState == WindowState.Minimized)
             _window.WindowState = WindowState.Normal;
         if (!_window.IsVisible)
@@ -301,21 +340,87 @@ public partial class App : Application
             var remaining = TimeSpan.FromMilliseconds(Math.Max(0, _pausedUntil - Environment.TickCount64));
             state = $"Paused for {remaining:mm\\:ss}";
         }
-        _tray.Text = $"NarrowVision · {state}";
+        _tray.Text = $"NovusVision · {state}";
         _trayFog.Checked = _settings.FogEnabled;
         _trayGuard.Checked = _settings.GuardEnabled;
         _trayGuard.Enabled = _guardAvailable;
         _trayPause.Text = IsPaused ? "Resume now" : "Pause for 5 min";
         _trayStartup.Checked = _startWithWindows;
-        _trayStartup.Enabled = _startupAvailable;
+        _trayStartup.Enabled = _startupAvailable && !_changingStartup;
         _trayLoadProfile.Enabled = Settings.HasDefault;
         _window.SetState(_status ?? _startupNotice ?? state, IsPaused, _guardAvailable,
-            ShortcutLabel(FogHotkey, "F8"), ShortcutLabel(GuardHotkey, "F9"),
-            ShortcutLabel(SettingsHotkey, "F10"), ShortcutLabel(PauseHotkey, "F11"));
+            ShortcutLabel(ShortcutAction.Fog), ShortcutLabel(ShortcutAction.Guard),
+            ShortcutLabel(ShortcutAction.Settings), ShortcutLabel(ShortcutAction.Pause));
     }
 
-    private string ShortcutLabel(int id, string functionKey)
-        => _hotkeys[id] ? $"Ctrl+Alt+{functionKey}" : "Unavailable";
+    private string ShortcutLabel(ShortcutAction action)
+        => _shortcuts[action] is null ? "Disabled" : RegisteredShortcutLabel(action) ?? "Unavailable";
+
+    private string? RegisteredShortcutLabel(ShortcutAction action)
+        => _registeredShortcuts.Contains(action) ? _shortcuts[action]?.Label : null;
+
+    private void EditShortcuts()
+    {
+        CancelClick(null);
+        _editingShortcuts = true;
+        foreach (var action in HotkeySettings.Actions)
+            Unregister(action);
+        try
+        {
+            var editor = new HotkeyWindow(_shortcuts, SaveShortcuts) { Owner = _window };
+            if (editor.ShowDialog() == true)
+                _status = "Keyboard shortcuts saved.";
+        }
+        finally
+        {
+            _editingShortcuts = false;
+            if (!_shuttingDown)
+            {
+                RegisterGlobalShortcuts();
+                RefreshStatus();
+            }
+        }
+    }
+
+    private string? SaveShortcuts(HotkeySettings candidate)
+    {
+        if (candidate.Validate() is { } error)
+            return error;
+        try
+        {
+            foreach (var action in HotkeySettings.Actions)
+            {
+                if (!Register(action, candidate[action]))
+                    return $"{candidate[action]?.Label} is unavailable. Choose a different shortcut.";
+            }
+            candidate.Save();
+            _shortcuts = candidate;
+            return null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return "Keyboard shortcuts could not be saved.";
+        }
+        finally
+        {
+            foreach (var action in HotkeySettings.Actions)
+                Unregister(action);
+        }
+    }
+
+    private static string? MigrateLegacyInstallation()
+    {
+        try
+        {
+            Settings.MigrateLegacySettings();
+            WindowsStartup.MigrateLegacyRegistration();
+            return null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or InvalidOperationException)
+        {
+            return "Some settings from the previous version could not be migrated.";
+        }
+    }
 
     private void SetStatus(string text)
     {
@@ -325,34 +430,49 @@ public partial class App : Application
         RefreshStatus();
     }
 
-    private void RefreshStartupPreference()
+    private async Task RefreshStartupPreference()
     {
+        if (_changingStartup)
+            return;
         try
         {
-            _startWithWindows = WindowsStartup.IsRegistered();
+            bool registered = await WindowsStartup.IsRegisteredAsync();
+            if (!_changingStartup)
+                _startWithWindows = registered;
             _startupAvailable = true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or COMException)
         {
             _startupAvailable = false;
             _startupNotice ??= "Windows startup settings are unavailable.";
         }
-        _window.SetStartup(_startWithWindows, _startupAvailable);
+        if (!_shuttingDown)
+            _window.SetStartup(_startWithWindows, _startupAvailable && !_changingStartup);
     }
 
-    private void SetWindowsStartup(bool enabled)
+    private async void SetWindowsStartup(bool enabled)
     {
+        if (_changingStartup)
+            return;
+        _changingStartup = true;
+        _window.SetStartup(_startWithWindows, available: false);
+        _trayStartup.Enabled = false;
+        string status;
         try
         {
-            WindowsStartup.SetRegistered(enabled);
-            RefreshStartupPreference();
-            SetStatus(enabled ? "NarrowVision will start in the tray when you sign in." : "Start with Windows is off.");
+            await WindowsStartup.SetRegisteredAsync(enabled);
+            status = enabled ? "NovusVision will start in the tray when you sign in." : "Start with Windows is off.";
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or InvalidOperationException or COMException)
         {
-            _window.SetStartup(_startWithWindows, _startupAvailable);
-            SetStatus(exception is InvalidOperationException ? exception.Message : "Windows startup settings could not be updated.");
+            status = exception is InvalidOperationException ? exception.Message : "Windows startup settings could not be updated.";
         }
+        finally
+        {
+            _changingStartup = false;
+        }
+        await RefreshStartupPreference();
+        SetStatus(status);
     }
 
     private void SaveDefaultProfile()
@@ -425,8 +545,11 @@ public partial class App : Application
             return;
         }
 
-        Register(ConfirmHotkey, ControlAlt, 0x0D);
-        Register(CancelHotkey, Native.ModNoRepeat, 0x1B);
+        if (!_editingShortcuts)
+        {
+            Register(ShortcutAction.Proceed, _shortcuts.Proceed);
+            Register(ShortcutAction.Cancel, _shortcuts.Cancel);
+        }
         _decision = new DecisionWindow();
         _decision.Decided += proceed =>
         {
@@ -437,7 +560,7 @@ public partial class App : Application
         };
         _decision.Expired += () => CancelClick("Click canceled after the time limit.");
         _decision.Present(attempt, details, DescribeWindow(attempt.Target), _settings.DecisionSeconds,
-            _hotkeys[ConfirmHotkey], _hotkeys[CancelHotkey]);
+            RegisteredShortcutLabel(ShortcutAction.Proceed), RegisteredShortcutLabel(ShortcutAction.Cancel));
         _focusTimer.Start();
     }
 
@@ -510,14 +633,14 @@ public partial class App : Application
     private void NotifyCanceled()
     {
         if (!_window.IsActive && _status is { } status)
-            _tray.ShowBalloonTip(3500, "NarrowVision", status, Forms.ToolTipIcon.Info);
+            _tray.ShowBalloonTip(3500, "NovusVision", status, Forms.ToolTipIcon.Info);
     }
 
     private void CloseDecision()
     {
         _focusTimer.Stop();
-        Unregister(ConfirmHotkey);
-        Unregister(CancelHotkey);
+        Unregister(ShortcutAction.Proceed);
+        Unregister(ShortcutAction.Cancel);
         _decision?.Close();
         _decision = null;
     }
@@ -561,8 +684,8 @@ public partial class App : Application
         _guard.Dispose();
         _fog.Dispose();
         _showRegistration?.Unregister(null);
-        for (int id = 1; id < _hotkeys.Length; id++)
-            Unregister(id);
+        foreach (var action in HotkeySettings.Actions)
+            Unregister(action);
         _messages?.Dispose();
         _tray.Visible = false;
         _tray.ContextMenuStrip?.Dispose();

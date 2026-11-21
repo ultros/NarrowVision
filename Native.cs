@@ -2,7 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace NarrowVision;
+namespace NovusVision;
 
 internal static class Native
 {
@@ -10,7 +10,7 @@ internal static class Native
     public const int WmMouseActivate = 0x0021;
     public const int WmQuit = 0x0012;
     public const int WhMouseLl = 14;
-    public const uint ModAlt = 0x0001, ModControl = 0x0002, ModShift = 0x0004, ModNoRepeat = 0x4000;
+    public const uint ModNoRepeat = 0x4000;
     private const int ExStyle = -20;
     private const int ExTransparent = 0x20, ExToolWindow = 0x80, ExNoActivate = 0x08000000;
     private static readonly nint Topmost = new(-1);

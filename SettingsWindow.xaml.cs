@@ -7,7 +7,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Navigation;
 
-namespace NarrowVision;
+namespace NovusVision;
 
 public partial class SettingsWindow : Window
 {
@@ -25,6 +25,7 @@ public partial class SettingsWindow : Window
     internal event Action? SaveProfileRequested;
     internal event Action? LoadProfileRequested;
     internal event Action? ClearProfileRequested;
+    internal event Action? EditShortcutsRequested;
     internal event Action<string>? StatusChanged;
 
     internal void SetStartup(bool registered, bool available)
@@ -35,7 +36,7 @@ public partial class SettingsWindow : Window
 
     internal void SetProfile(bool saved)
     {
-        ProfileStatus.Text = saved ? "Saved default loads each time NarrowVision opens." : "Current settings are saved automatically.";
+        ProfileStatus.Text = saved ? "Saved default loads each time NovusVision opens." : "Current settings are saved automatically.";
         LoadProfile.IsEnabled = saved;
         ClearProfile.IsEnabled = saved;
     }
@@ -130,6 +131,7 @@ public partial class SettingsWindow : Window
     private void SaveProfileClicked(object sender, RoutedEventArgs args) => SaveProfileRequested?.Invoke();
     private void LoadProfileClicked(object sender, RoutedEventArgs args) => LoadProfileRequested?.Invoke();
     private void ClearProfileClicked(object sender, RoutedEventArgs args) => ClearProfileRequested?.Invoke();
+    private void EditShortcutsClicked(object sender, RoutedEventArgs args) => EditShortcutsRequested?.Invoke();
 
     private void OpenCompanySite(object sender, RequestNavigateEventArgs args)
     {

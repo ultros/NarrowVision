@@ -3,7 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace NarrowVision;
+namespace NovusVision;
 
 internal enum FogMode { Reveal, Dim }
 internal enum ApertureShape { Ellipse, RoundedRectangle }
@@ -26,11 +26,11 @@ internal sealed record Settings
     public bool GuardMiddleButton { get; init; } = true;
     public int DecisionSeconds { get; init; } = 15;
 
-    private static readonly string DirectoryPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NarrowVision");
+    internal static readonly string DirectoryPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovusVision");
     private static readonly string FilePath = Path.Combine(DirectoryPath, "settings.json");
     private static readonly string DefaultPath = Path.Combine(DirectoryPath, "default-profile.json");
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }
@@ -46,6 +46,20 @@ internal sealed record Settings
         => Read(DefaultPath, "The saved default profile could not be loaded.");
 
     public static bool HasDefault => File.Exists(DefaultPath);
+
+    public static void MigrateLegacySettings()
+    {
+        string legacy = Path.Combine(Path.GetDirectoryName(DirectoryPath)!, "NarrowVision");
+        if (Directory.Exists(DirectoryPath) || !Directory.Exists(legacy))
+            return;
+        Directory.CreateDirectory(DirectoryPath);
+        foreach (string destination in new[] { FilePath, DefaultPath })
+        {
+            string source = Path.Combine(legacy, Path.GetFileName(destination));
+            if (File.Exists(source))
+                File.Copy(source, destination);
+        }
+    }
 
     private static (Settings? Value, string? Notice) Read(string filePath, string errorMessage)
     {
@@ -70,15 +84,15 @@ internal sealed record Settings
         }
     }
 
-    public void Save() => Write(FilePath);
-    public void SaveDefault() => Write(DefaultPath);
+    public void Save() => Write(FilePath, this);
+    public void SaveDefault() => Write(DefaultPath, this);
     public static void ClearDefault() => File.Delete(DefaultPath);
 
-    private void Write(string filePath)
+    internal static void Write<T>(string filePath, T value)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
         var temporaryFile = filePath + ".tmp";
-        File.WriteAllText(temporaryFile, JsonSerializer.Serialize(this, JsonOptions));
+        File.WriteAllText(temporaryFile, JsonSerializer.Serialize(value, JsonOptions));
         File.Move(temporaryFile, filePath, overwrite: true);
     }
 }
